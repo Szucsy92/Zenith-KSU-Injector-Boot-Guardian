@@ -1,0 +1,37 @@
+#!/system/bin/sh
+# ZENITH KSU MODULE MANAGER - FINAL SYSTEM VERSION
+# Created by @szucsy92 & @A1X31
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+clear
+echo -e "${CYAN}========================================${NC}"
+echo -e "${CYAN}       ZENITH KSU MODULE MANAGER        ${NC}"
+echo -e "${CYAN}========================================${NC}"
+echo ""
+echo "Please select an option:"
+echo "1) FULL SYSTEM/DATA CLEAN"
+echo "2) UPDATE & INJECT"
+echo "q) Quit"
+echo ""
+echo -n "Option: "
+read choice
+
+case $choice in
+    1)
+        echo -e "${RED}Starting Full Wipe...${NC}"
+        su -c "mount -o remount,rw / && rm -rf /data/adb && rm -rf /system/usr/share/ksu_modules/adb && mkdir -p /system/usr/share/ksu_modules && mount -o remount,ro /"
+        echo -e "${GREEN}--- Done! All clear. ---${NC}"
+        ;;
+    2)
+        echo -e "${YELLOW}Starting Sync & Injection...${NC}"
+        su -c "mount -o remount,rw / && rm -rf /system/usr/share/ksu_modules/adb && mkdir -p /system/usr/share/ksu_modules && cp -a /data/adb /system/usr/share/ksu_modules/ && rm -rf /system/usr/share/ksu_modules/adb/ksu && restorecon -Rv /system/usr/share/ksu_modules/adb && mount -o remount,ro /"
+        echo -e "${GREEN}--- Done! /system/usr/share/ksu_modules/adb refreshed! ---${NC}"
+        ;;
+    q)
+        exit 0
+        ;;
+esac
