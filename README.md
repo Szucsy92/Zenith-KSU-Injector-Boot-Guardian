@@ -1,5 +1,6 @@
 # Zenith-KSU-Injector-Boot-Guardian
 System-level KSU module integration with bootloop guardian and APEX self-healing for Samsung OneUI (ext4)
+Special thanks to @A1X31 for help and support!
 
 Check the shared zip for more information about how to use.
 
