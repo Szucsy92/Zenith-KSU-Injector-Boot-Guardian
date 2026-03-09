@@ -1,0 +1,6 @@
+id=zenith_ksu_boot_guardian
+name=Zenith KSU Injector Boot Guardian
+version=2.1.0
+versionCode=210
+author=szucsy92 & A1X31
+description=One-click KernelSU module with injector sync, bootloop guardian, APEX self-healing, and WebUI controls.

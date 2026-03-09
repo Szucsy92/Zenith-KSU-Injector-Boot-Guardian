@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# ZENITH KSU MODULE MANAGER - FINAL SYSTEM VERSION
+# Zenith KSU module manager
 # Created by @szucsy92 & @A1X31
 
 GREEN='\033[0;32m'
@@ -8,59 +8,118 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+MODULE_ID="zenith_ksu_boot_guardian"
+MODULE_ACTION="/data/adb/modules/$MODULE_ID/action.sh"
+
+run_root_action() {
+    action="$1"
+
+    if [ -f "$MODULE_ACTION" ]; then
+        if [ "$(id -u)" -eq 0 ]; then
+            sh "$MODULE_ACTION" "$action"
+        else
+            su -c "sh '$MODULE_ACTION' '$action'"
+        fi
+        return $?
+    fi
+
+    # Fallback for legacy integrated setup.
+    if [ "$(id -u)" -eq 0 ]; then
+        case "$action" in
+            update_inject)
+                mount -o remount,rw /
+                rm -rf /system/usr/share/ksu_modules/adb
+                mkdir -p /system/usr/share/ksu_modules
+                cp -af /data/adb /system/usr/share/ksu_modules/
+                rm -rf /system/usr/share/ksu_modules/adb/ksu
+                if command -v restorecon >/dev/null 2>&1; then
+                    restorecon -RF /system/usr/share/ksu_modules/adb
+                fi
+                mount -o remount,ro /
+                ;;
+            clear_system)
+                mount -o remount,rw /
+                rm -rf /system/usr/share/ksu_modules/adb
+                mount -o remount,ro /
+                ;;
+            full_remove)
+                mount -o remount,rw /
+                rm -rf /data/adb
+                rm -rf /system/usr/share/ksu_modules/adb
+                mkdir -p /system/usr/share/ksu_modules
+                mount -o remount,ro /
+                ;;
+            apex_optimize)
+                mount -o remount,rw /data && rm -rf /data/apex/active/* /data/apex/backup/* /data/dalvik-cache/* /data/resource-cache/*
+                ;;
+            status)
+                echo "System snapshot path: /system/usr/share/ksu_modules/adb"
+                [ -d /system/usr/share/ksu_modules/adb ] && echo "  present" || echo "  missing"
+                echo "Data path: /data/adb"
+                [ -d /data/adb ] && echo "  present" || echo "  missing"
+                ;;
+            *)
+                echo "Unknown action: $action"
+                return 2
+                ;;
+        esac
+    else
+        su -c "$(printf '%s' "$0 __legacy $action")"
+    fi
+}
+
+if [ "$1" = "__legacy" ]; then
+    shift
+    run_root_action "$1"
+    exit $?
+fi
+
 while true; do
     clear
     echo -e "${CYAN}========================================${NC}"
     echo -e "${CYAN}       ZENITH KSU MODULE MANAGER        ${NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
-    echo "1) CLEAR (Choose what you want to delete)"
-    echo "2) UPDATE & INJECT"
+    echo "1) UPDATE & INJECT"
+    echo "2) CLEAR SYSTEM INJECTION"
+    echo "3) FULL REMOVE (SYSTEM + DATA)"
+    echo "4) APEX OPTIMIZE"
+    echo "5) STATUS"
     echo "q) Quit"
     echo ""
     echo -n "Option: "
-    read choice
+    read -r choice
 
-    case $choice in
+    case "$choice" in
         1)
-            clear
-            echo -e "${YELLOW}--- CLEAR SUBMENU ---${NC}"
-            echo "1) System injection (ksu_modules)"
-            echo "2) System and data (Full remove)"
-            echo "3) APEX (Optimization)"
-            echo "b) Back"
-            echo ""
-            echo -n "Sub-option: "
-            read subchoice
-            
-            case $subchoice in
-                1)
-                    echo -e "${RED}Cleaning system injection...${NC}"
-                    su -c "mount -o remount,rw / && rm -rf /system/usr/share/ksu_modules/adb && mount -o remount,ro /"
-                    ;;
-                2)
-                    echo -e "${RED}Starting Full Wipe...${NC}"
-                    su -c "mount -o remount,rw / && rm -rf /data/adb && rm -rf /system/usr/share/ksu_modules/adb && mkdir -p /system/usr/share/ksu_modules && mount -o remount,ro /"
-                    ;;
-                3)
-                    echo -e "${CYAN}Optimizing APEX...${NC}"
-                    su -c "mount -o remount,rw / && rm -rf /data/apex/* && mount -o remount,ro /"
-                    ;;
-                b)
-                    continue
-                    ;;
-            esac
-            echo -e "${GREEN}Operation finished.${NC}"
-            sleep 2
+            echo -e "${YELLOW}Starting UPDATE & INJECT...${NC}"
+            run_root_action "update_inject"
             ;;
         2)
-            echo -e "${YELLOW}Starting Sync & Injection...${NC}"
-            su -c "mount -o remount,rw / && rm -rf /system/usr/share/ksu_modules/adb && mkdir -p /system/usr/share/ksu_modules && cp -a /data/adb /system/usr/share/ksu_modules/ && rm -rf /system/usr/share/ksu_modules/adb/ksu && restorecon -Rv /system/usr/share/ksu_modules/adb && mount -o remount,ro /"
-            echo -e "${GREEN}--- Done! /system/usr/share/ksu_modules/adb refreshed! ---${NC}"
-            sleep 2
+            echo -e "${RED}Cleaning system injection...${NC}"
+            run_root_action "clear_system"
             ;;
-        q)
+        3)
+            echo -e "${RED}Starting full remove...${NC}"
+            run_root_action "full_remove"
+            ;;
+        4)
+            echo -e "${CYAN}Optimizing APEX...${NC}"
+            run_root_action "apex_optimize"
+            ;;
+        5)
+            run_root_action "status"
+            ;;
+        q|Q)
             exit 0
             ;;
+        *)
+            echo -e "${YELLOW}Invalid option.${NC}"
+            ;;
     esac
+
+    echo ""
+    echo -e "${GREEN}Operation finished.${NC}"
+    echo "Press Enter to continue..."
+    read -r _
 done

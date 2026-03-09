@@ -1,7 +1,14 @@
 /system/bin/apex_check\.sh      u:object_r:system_file:s0
+/system/system/bin/apex_check\.sh u:object_r:system_file:s0
 /system/bin/apex_reset\.sh      u:object_r:system_file:s0
+/system/system/bin/apex_reset\.sh u:object_r:system_file:s0
 /system/bin/ksu_init\.sh        u:object_r:su_exec:s0
+/system/system/bin/ksu_init\.sh u:object_r:su_exec:s0
 /system/bin/boot_guardian\.sh   u:object_r:system_file:s0
+/system/system/bin/boot_guardian\.sh u:object_r:system_file:s0
 /system/bin/zenith              u:object_r:system_file:s0
+/system/system/bin/zenith       u:object_r:system_file:s0
 /system/etc/init/apex_fix\.rc   u:object_r:system_file:s0
+/system/system/etc/init/apex_fix\.rc u:object_r:system_file:s0
 /system/etc/init/init\.ksu_prep\.rc u:object_r:system_file:s0
+/system/system/etc/init/init\.ksu_prep\.rc u:object_r:system_file:s0

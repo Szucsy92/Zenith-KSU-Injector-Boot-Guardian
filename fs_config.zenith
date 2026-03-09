@@ -1,8 +1,15 @@
 # Zenith KSU files - permissions
 system/bin/apex_check.sh        0 2000 0755
+system/system/bin/apex_check.sh 0 2000 0755
 system/bin/apex_reset.sh        0 2000 0755
+system/system/bin/apex_reset.sh 0 2000 0755
 system/bin/ksu_init.sh          0 2000 0755
+system/system/bin/ksu_init.sh   0 2000 0755
 system/bin/boot_guardian.sh     0 2000 0755
+system/system/bin/boot_guardian.sh 0 2000 0755
 system/bin/zenith               0 2000 0755
+system/system/bin/zenith        0 2000 0755
 system/etc/init/apex_fix.rc     0    0 0644
+system/system/etc/init/apex_fix.rc 0    0 0644
 system/etc/init/init.ksu_prep.rc 0    0 0644
+system/system/etc/init/init.ksu_prep.rc 0    0 0644

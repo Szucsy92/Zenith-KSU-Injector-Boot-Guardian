@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Zenith Control Center</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <main class="shell">
+        <section class="hero">
+            <p class="eyebrow">KernelSU Module</p>
+            <h1>Zenith Control Center</h1>
+            <p class="subtitle">Run actions and configure behavior without Termux.</p>
+            <p class="meta">Module directory: <code id="module-dir">loading...</code></p>
+        </section>
+
+        <section class="grid">
+            <button class="action primary" data-action="update_inject">Update &amp; Inject</button>
+            <button class="action" data-action="status">Refresh Status</button>
+            <button class="action warn" data-action="apex_optimize">Optimize APEX</button>
+            <button class="action danger" data-action="clear_system">Clear System Injection</button>
+            <button class="action danger" data-action="full_remove">Full Remove (System + Data)</button>
+            <button class="action" id="show-log">Show Last Log</button>
+        </section>
+
+        <section class="config-wrap">
+            <div class="config-head">
+                <h2>Config</h2>
+                <p>Saved in <code>config/zenith.conf</code>. Applied automatically on next boot.</p>
+            </div>
+
+            <div class="config-grid">
+                <label class="field switch">
+                    <span>Boot Guardian</span>
+                    <input type="checkbox" id="cfg_boot_guardian">
+                </label>
+
+                <label class="field switch">
+                    <span>APEX Auto Heal</span>
+                    <input type="checkbox" id="cfg_apex_heal">
+                </label>
+
+                <label class="field switch">
+                    <span>Auto Inject on Boot</span>
+                    <input type="checkbox" id="cfg_auto_inject">
+                </label>
+
+                <label class="field">
+                    <span>Boot Fail Limit</span>
+                    <input type="number" id="cfg_fail_limit" min="1" max="20" inputmode="numeric">
+                </label>
+
+                <label class="field">
+                    <span>APEX Wipe Trigger</span>
+                    <input type="number" id="cfg_apex_trigger" min="1" max="20" inputmode="numeric">
+                </label>
+
+                <label class="field">
+                    <span>Reset Delay (sec)</span>
+                    <input type="number" id="cfg_reset_delay" min="1" max="600" inputmode="numeric">
+                </label>
+            </div>
+
+            <div class="config-actions">
+                <button class="action" id="cfg-reload">Reload Config</button>
+                <button class="action primary" id="cfg-save">Save Config</button>
+                <button class="action warn" id="cfg-reset">Reset Defaults</button>
+            </div>
+        </section>
+
+        <section class="terminal-wrap">
+            <div class="terminal-head">
+                <span>Command Output</span>
+                <span id="status-badge">idle</span>
+            </div>
+            <pre id="terminal">Zenith WebUI ready.</pre>
+        </section>
+    </main>
+
+    <script>
+        (() => {
+            const terminal = document.getElementById("terminal");
+            const statusBadge = document.getElementById("status-badge");
+            const moduleDirLabel = document.getElementById("module-dir");
+            const actionButtons = Array.from(document.querySelectorAll("button.action[data-action]"));
+            const showLogBtn = document.getElementById("show-log");
+            const cfgReloadBtn = document.getElementById("cfg-reload");
+            const cfgSaveBtn = document.getElementById("cfg-save");
+            const cfgResetBtn = document.getElementById("cfg-reset");
+            const configControls = [
+                document.getElementById("cfg_boot_guardian"),
+                document.getElementById("cfg_apex_heal"),
+                document.getElementById("cfg_auto_inject"),
+                document.getElementById("cfg_fail_limit"),
+                document.getElementById("cfg_apex_trigger"),
+                document.getElementById("cfg_reset_delay"),
+            ];
+            const MODULE_ID = "zenith_ksu_boot_guardian";
+            let callbackCounter = 0;
+            let moduleDir = `/data/adb/modules/${MODULE_ID}`;
+            const pendingDangerConfirm = {};
+            const DANGER_CONFIRM_TTL_MS = 7000;
+            const EXEC_TIMEOUT_MS = 15000;
+            const ACTION_LABELS = {
+                status: "Refresh Status",
+                update_inject: "Update & Inject",
+                apex_optimize: "Optimize APEX",
+                clear_system: "Clear System Injection",
+                full_remove: "Full Remove",
+                show_log: "Show Last Log",
+                config_show: "Config Show",
+                config_apply: "Save Config",
+                config_reset: "Reset Config",
+            };
+
+            function append(text) {
+                terminal.textContent += `\n${text}`;
+                terminal.scrollTop = terminal.scrollHeight;
+            }
+
+            function formatDuration(ms) {
+                if (ms < 1000) return `${ms}ms`;
+                return `${(ms / 1000).toFixed(2)}s`;
+            }
+
+            function setBusy(isBusy) {
+                actionButtons.forEach((btn) => { btn.disabled = isBusy; });
+                showLogBtn.disabled = isBusy;
+                cfgReloadBtn.disabled = isBusy;
+                cfgSaveBtn.disabled = isBusy;
+                cfgResetBtn.disabled = isBusy;
+                configControls.forEach((el) => { el.disabled = isBusy; });
+                statusBadge.textContent = isBusy ? "running" : "idle";
+            }
+
+            function parseModuleInfo() {
+                try {
+                    const raw = ksu.moduleInfo();
+                    const info = JSON.parse(raw || "{}");
+                    if (info.moduleDir) {
+                        moduleDir = info.moduleDir;
+                    }
+                } catch (err) {
+                    append(`[WARN] moduleInfo parsing failed: ${err}`);
+                }
+                moduleDirLabel.textContent = moduleDir;
+            }
+
+            function safeToast(message) {
+                if (typeof ksu !== "undefined" && typeof ksu.toast === "function") {
+                    try {
+                        ksu.toast(message);
+                    } catch (err) {
+                        append(`[WARN] toast failed: ${err}`);
+                    }
+                }
+            }
+
+            function execRoot(command, options = {}) {
+                return new Promise((resolve, reject) => {
+                    const callbackName = `zenith_exec_cb_${Date.now()}_${callbackCounter++}`;
+                    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : EXEC_TIMEOUT_MS;
+                    const execOptions = {};
+                    if (options && typeof options === "object") {
+                        Object.keys(options).forEach((key) => {
+                            if (key !== "timeoutMs") {
+                                execOptions[key] = options[key];
+                            }
+                        });
+                    }
+                    let settled = false;
+                    const timer = setTimeout(() => {
+                        if (settled) return;
+                        settled = true;
+                        delete window[callbackName];
+                        resolve({
+                            errno: 124,
+                            stdout: "",
+                            stderr: `KernelSU exec timeout after ${timeoutMs}ms`,
+                        });
+                    }, timeoutMs);
+
+                    window[callbackName] = (errno, stdout, stderr) => {
+                        if (settled) return;
+                        settled = true;
+                        clearTimeout(timer);
+                        delete window[callbackName];
+                        resolve({
+                            errno: Number(errno) || 0,
+                            stdout: stdout || "",
+                            stderr: stderr || "",
+                        });
+                    };
+
+                    try {
+                        ksu.exec(command, JSON.stringify(execOptions), callbackName);
+                    } catch (error) {
+                        settled = true;
+                        clearTimeout(timer);
+                        delete window[callbackName];
+                        reject(error);
+                    }
+                });
+            }
+
+            function quoteArg(value) {
+                return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
+            }
+
+            function getActionCommand(...args) {
+                const actionPath = `${moduleDir}/action.sh`;
+                return `sh '${actionPath}' ${args.map(quoteArg).join(" ")}`;
+            }
+
+            function confirmDangerousAction(actionKey, promptText) {
+                const now = Date.now();
+                const last = pendingDangerConfirm[actionKey] || 0;
+                if (now - last <= DANGER_CONFIRM_TTL_MS) {
+                    pendingDangerConfirm[actionKey] = 0;
+                    return true;
+                }
+
+                pendingDangerConfirm[actionKey] = now;
+                append(`[confirm] ${promptText}`);
+                append(`[confirm] Tap the same button again within ${Math.floor(DANGER_CONFIRM_TTL_MS / 1000)}s.`);
+                safeToast("Tap again to confirm");
+                return false;
+            }
+
+            async function runCommand(label, command, options = {}) {
+                const {
+                    appendCommand = true,
+                    appendOutput = true,
+                    notifySuccess = true,
+                    notifyFail = true,
+                } = options;
+                const startedAt = Date.now();
+                const displayLabel = ACTION_LABELS[label] || label;
+
+                setBusy(true);
+                append(`\n[start] ${displayLabel}`);
+                append(`[phase] requesting root execution`);
+                if (appendCommand) {
+                    append(`\n$ ${command}`);
+                }
+
+                try {
+                    append("[phase] waiting for command result");
+                    const result = await execRoot(command);
+                    if (appendOutput && result.stdout.trim()) {
+                        append(result.stdout.trim());
+                    }
+                    if (appendOutput && result.stderr.trim()) {
+                        append(`[stderr]\n${result.stderr.trim()}`);
+                    }
+                    append(`[exit:${result.errno}] ${label}`);
+                    append(`[done] ${displayLabel} finished in ${formatDuration(Date.now() - startedAt)}`);
+                    if (result.errno === 0) {
+                        if (notifySuccess) safeToast(`${label} finished`);
+                    } else {
+                        if (notifyFail) safeToast(`${label} failed`);
+                    }
+                    return result;
+                } catch (error) {
+                    append(`[ERROR] ${error}`);
+                    if (notifyFail) safeToast(`${label} crashed`);
+                    return null;
+                } finally {
+                    setBusy(false);
+                }
+            }
+
+            async function runAction(action) {
+                append(`[request] ${ACTION_LABELS[action] || action}`);
+                if (action === "full_remove") {
+                    const ok = confirmDangerousAction(
+                        "full_remove",
+                        "Full remove deletes /data/adb and the system snapshot. Continue?"
+                    );
+                    if (!ok) return;
+                }
+                await runCommand(action, getActionCommand(action));
+            }
+
+            function parseConfigOutput(output) {
+                const config = {};
+                output.split(/\r?\n/).forEach((line) => {
+                    const match = line.match(/^([A-Z_]+)=(.*)$/);
+                    if (!match) return;
+                    config[match[1]] = match[2].trim();
+                });
+                return config;
+            }
+
+            function applyConfig(config) {
+                document.getElementById("cfg_boot_guardian").checked = config.BOOT_GUARDIAN_ENABLED !== "0";
+                document.getElementById("cfg_apex_heal").checked = config.APEX_AUTO_HEAL_ENABLED !== "0";
+                document.getElementById("cfg_auto_inject").checked = config.AUTO_INJECT_ON_BOOT !== "0";
+                document.getElementById("cfg_fail_limit").value = config.BOOT_FAIL_LIMIT || "5";
+                document.getElementById("cfg_apex_trigger").value = config.APEX_WIPE_TRIGGER || "2";
+                document.getElementById("cfg_reset_delay").value = config.RESET_DELAY_SEC || "60";
+            }
+
+            function collectConfigPairs() {
+                const bootGuardian = document.getElementById("cfg_boot_guardian").checked ? "1" : "0";
+                const apexHeal = document.getElementById("cfg_apex_heal").checked ? "1" : "0";
+                const autoInject = document.getElementById("cfg_auto_inject").checked ? "1" : "0";
+                const failLimit = document.getElementById("cfg_fail_limit").value || "5";
+                const apexTrigger = document.getElementById("cfg_apex_trigger").value || "2";
+                const resetDelay = document.getElementById("cfg_reset_delay").value || "60";
+
+                return [
+                    `BOOT_GUARDIAN_ENABLED=${bootGuardian}`,
+                    `APEX_AUTO_HEAL_ENABLED=${apexHeal}`,
+                    `AUTO_INJECT_ON_BOOT=${autoInject}`,
+                    `BOOT_FAIL_LIMIT=${failLimit}`,
+                    `APEX_WIPE_TRIGGER=${apexTrigger}`,
+                    `RESET_DELAY_SEC=${resetDelay}`,
+                ];
+            }
+
+            async function loadConfig() {
+                const result = await runCommand("config_show", getActionCommand("config_show"), {
+                    notifySuccess: false,
+                    notifyFail: true,
+                });
+                if (!result || result.errno !== 0) return;
+                applyConfig(parseConfigOutput(result.stdout || ""));
+            }
+
+            async function saveConfig() {
+                const pairs = collectConfigPairs();
+                const result = await runCommand("config_apply", getActionCommand("config_apply", ...pairs), {
+                    notifySuccess: true,
+                    notifyFail: true,
+                });
+                if (result && result.errno === 0) {
+                    await loadConfig();
+                }
+            }
+
+            if (typeof ksu === "undefined") {
+                terminal.textContent = "KernelSU WebUI bridge not found. Open this page from KernelSU Manager.";
+                statusBadge.textContent = "unavailable";
+                actionButtons.forEach((btn) => { btn.disabled = true; });
+                showLogBtn.disabled = true;
+                cfgReloadBtn.disabled = true;
+                cfgSaveBtn.disabled = true;
+                cfgResetBtn.disabled = true;
+                configControls.forEach((el) => { el.disabled = true; });
+                moduleDirLabel.textContent = "unknown";
+                return;
+            }
+
+            parseModuleInfo();
+
+            actionButtons.forEach((btn) => {
+                btn.addEventListener("click", () => {
+                    runAction(btn.dataset.action);
+                });
+            });
+
+            showLogBtn.addEventListener("click", () => {
+                runCommand("show_log", getActionCommand("show_log"));
+            });
+
+            cfgReloadBtn.addEventListener("click", () => {
+                loadConfig();
+            });
+
+            cfgSaveBtn.addEventListener("click", () => {
+                saveConfig();
+            });
+
+            cfgResetBtn.addEventListener("click", async () => {
+                const ok = confirmDangerousAction(
+                    "config_reset",
+                    "Reset config to defaults?"
+                );
+                if (!ok) return;
+                const result = await runCommand("config_reset", getActionCommand("config_reset"), {
+                    notifySuccess: true,
+                    notifyFail: true,
+                });
+                if (result && result.errno === 0) {
+                    await loadConfig();
+                }
+            });
+
+            runAction("status").then(() => loadConfig());
+        })();
+    </script>
+</body>
+</html>
